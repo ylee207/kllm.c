@@ -84,16 +84,27 @@ def process_dataset(config_name):
         logging.error(f"Error loading dataset {config['dataset']}: {str(e)}")
         return
 
-    # Tokenize all documents and write output shards
+    # Split the dataset into train and validation
+    val_size = int(len(dataset) * config["val_split"])
+    train_dataset = dataset.select(range(len(dataset) - val_size))
+    val_dataset = dataset.select(range(len(dataset) - val_size, len(dataset)))
+
+    logging.info(f"Train set size: {len(train_dataset)}, Validation set size: {len(val_dataset)}")
+
+    # Process train and validation sets
+    for split, current_dataset in [("train", train_dataset), ("val", val_dataset)]:
+        process_split(split, current_dataset, config)
+
+def process_split(split, dataset, config):
     nprocs = max(1, os.cpu_count() - 2)
-    logging.info(f"Starting tokenization with {nprocs} processes")
+    logging.info(f"Starting tokenization of {split} split with {nprocs} processes")
     with mp.Pool(nprocs) as pool:
         shard_index = 0
         all_tokens_np = np.empty((config["shard_size"],), dtype=np.uint16)
         token_count = 0
         progress_bar = None
 
-        for tokens in tqdm(pool.imap(tokenize, dataset, chunksize=16), total=len(dataset), desc="Tokenizing", file=sys.stdout):
+        for tokens in tqdm(pool.imap(tokenize, dataset, chunksize=16), total=len(dataset), desc=f"Tokenizing {split}", file=sys.stdout):
             if len(tokens) == 0:
                 continue  # Skip empty results from tokenization errors
             if token_count + len(tokens) < config["shard_size"]:
@@ -108,10 +119,10 @@ def process_dataset(config_name):
                     progress_bar.update(remainder)
                 all_tokens_np[token_count:token_count+remainder] = tokens[:remainder]
                 
-                filename = os.path.join(config["output_dir"], f"train_{shard_index:06d}.bin")
+                filename = os.path.join(config["output_dir"], f"{split}_{shard_index:06d}.bin")
                 
                 write_datafile(filename, all_tokens_np)
-                logging.info(f"Wrote shard {shard_index} to {filename}")
+                logging.info(f"Wrote {split} shard {shard_index} to {filename}")
                 shard_index += 1
                 progress_bar = None
                 all_tokens_np[0:len(tokens)-remainder] = tokens[remainder:]
@@ -119,12 +130,12 @@ def process_dataset(config_name):
 
         # Write any remaining tokens as the last shard
         if token_count != 0:
-            filename = os.path.join(config["output_dir"], f"train_{shard_index:06d}.bin")
+            filename = os.path.join(config["output_dir"], f"{split}_{shard_index:06d}.bin")
             
             write_datafile(filename, all_tokens_np[:token_count])
-            logging.info(f"Wrote final shard {shard_index} to {filename}")
+            logging.info(f"Wrote final {split} shard {shard_index} to {filename}")
 
-    logging.info(f"Finished processing {config_name}")
+    logging.info(f"Finished processing {split} split")
 
 def main():
     if len(sys.argv) > 1:
