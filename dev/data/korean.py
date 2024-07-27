@@ -14,7 +14,7 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 
 # Configuration for different datasets
 DATASET_CONFIGS = {
-    "HAERAE-HUB/KOREAN-WEBTEXT": {
+       "HAERAE-HUB/KOREAN-WEBTEXT": {
         "dataset": "HAERAE-HUB/KOREAN-WEBTEXT",
         "config": None,
         "split": "train",
@@ -84,16 +84,23 @@ def process_dataset(config_name):
         logging.error(f"Error loading dataset {config['dataset']}: {str(e)}")
         return
 
-    # Split the dataset into train and validation
-    val_size = int(len(dataset) * config["val_split"])
-    train_dataset = dataset.select(range(len(dataset) - val_size))
-    val_dataset = dataset.select(range(len(dataset) - val_size, len(dataset)))
-
-    logging.info(f"Train set size: {len(train_dataset)}, Validation set size: {len(val_dataset)}")
-
-    # Process train and validation sets
-    for split, current_dataset in [("train", train_dataset), ("val", val_dataset)]:
-        process_split(split, current_dataset, config)
+    # Check if val_split is specified, otherwise use 0 (no validation split)
+    val_split = config.get("val_split", 0)
+    
+    if val_split > 0:
+        # Split the dataset into train and validation
+        val_size = int(len(dataset) * val_split)
+        train_dataset = dataset.select(range(len(dataset) - val_size))
+        val_dataset = dataset.select(range(len(dataset) - val_size, len(dataset)))
+        logging.info(f"Train set size: {len(train_dataset)}, Validation set size: {len(val_dataset)}")
+        
+        # Process train and validation sets
+        process_split("train", train_dataset, config)
+        process_split("val", val_dataset, config)
+    else:
+        # Process the entire dataset as train
+        logging.info("No validation split specified. Processing entire dataset as train.")
+        process_split("train", dataset, config)
 
 def process_split(split, dataset, config):
     nprocs = max(1, os.cpu_count() - 2)
