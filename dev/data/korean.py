@@ -85,7 +85,7 @@ def process_dataset(config_name):
         return
 
     # Check if val_split is specified, otherwise use 0 (no validation split)
-    val_split = config.get("val_split", 0)
+    val_split = config.get("val_split", 0.05)
     
     if val_split > 0:
         # Split the dataset into train and validation
