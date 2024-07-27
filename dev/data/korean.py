@@ -14,7 +14,7 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 
 # Configuration for different datasets
 DATASET_CONFIGS = {
-       "HAERAE-HUB/KOREAN-WEBTEXT": {
+     "HAERAE-HUB/KOREAN-WEBTEXT": {
         "dataset": "HAERAE-HUB/KOREAN-WEBTEXT",
         "config": None,
         "split": "train",
@@ -53,6 +53,9 @@ DATASET_CONFIGS = {
 enc = tiktoken.get_encoding("gpt2")
 eot = enc._special_tokens['<|endoftext|>']  # end of text token
 
+# Global variable to keep track of the last used shard index
+last_shard_index = -1
+
 def tokenize(doc):
     try:
         tokens = [eot]  # the special <|endoftext|> token delimits all documents
@@ -65,12 +68,14 @@ def tokenize(doc):
         return np.array([], dtype=np.uint16)
 
 def process_dataset(config_name):
+    global last_shard_index
     config = DATASET_CONFIGS[config_name]
     
     logging.info(f"Starting to process dataset: {config_name}")
     
     # Create the output directory if it doesn't exist
-    os.makedirs(config["output_dir"], exist_ok=True)
+    output_dir = "processed_data"
+    os.makedirs(output_dir, exist_ok=True)
 
     # Load the dataset
     try:
@@ -95,18 +100,18 @@ def process_dataset(config_name):
         logging.info(f"Train set size: {len(train_dataset)}, Validation set size: {len(val_dataset)}")
         
         # Process train and validation sets
-        process_split("train", train_dataset, config)
-        process_split("val", val_dataset, config)
+        last_shard_index = process_split("train", train_dataset, config, output_dir, last_shard_index)
+        last_shard_index = process_split("val", val_dataset, config, output_dir, last_shard_index)
     else:
         # Process the entire dataset as train
         logging.info("No validation split specified. Processing entire dataset as train.")
-        process_split("train", dataset, config)
+        last_shard_index = process_split("train", dataset, config, output_dir, last_shard_index)
 
-def process_split(split, dataset, config):
+def process_split(split, dataset, config, output_dir, start_shard_index):
     nprocs = max(1, os.cpu_count() - 2)
     logging.info(f"Starting tokenization of {split} split with {nprocs} processes")
     with mp.Pool(nprocs) as pool:
-        shard_index = 0
+        shard_index = start_shard_index + 1
         all_tokens_np = np.empty((config["shard_size"],), dtype=np.uint16)
         token_count = 0
         progress_bar = None
@@ -126,7 +131,7 @@ def process_split(split, dataset, config):
                     progress_bar.update(remainder)
                 all_tokens_np[token_count:token_count+remainder] = tokens[:remainder]
                 
-                filename = os.path.join(config["output_dir"], f"{split}_{shard_index:06d}.bin")
+                filename = os.path.join(output_dir, f"{split}_{shard_index:06d}.bin")
                 
                 write_datafile(filename, all_tokens_np)
                 logging.info(f"Wrote {split} shard {shard_index} to {filename}")
@@ -137,12 +142,14 @@ def process_split(split, dataset, config):
 
         # Write any remaining tokens as the last shard
         if token_count != 0:
-            filename = os.path.join(config["output_dir"], f"{split}_{shard_index:06d}.bin")
+            filename = os.path.join(output_dir, f"{split}_{shard_index:06d}.bin")
             
             write_datafile(filename, all_tokens_np[:token_count])
             logging.info(f"Wrote final {split} shard {shard_index} to {filename}")
+            shard_index += 1
 
     logging.info(f"Finished processing {split} split")
+    return shard_index - 1  # Return the last used shard index
 
 def main():
     if len(sys.argv) > 1:
